@@ -1,0 +1,25 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Mondays and Thursdays at 14:00 UTC (~7am Pacific / 10am Eastern) — same cadence
+    # as the Cobalt keep-alive. Adjust the cron if you want a different schedule.
+    - cron: '0 14 * * 1,4'
+  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab to test
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Redmount Supabase REST endpoint
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://pdympbpyavilstjsmjtm.supabase.co/rest/v1/app_state?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          echo "Supabase responded with HTTP $STATUS"
+          if [ "$STATUS" -ge 400 ]; then
+            echo "::warning::Keep-alive ping returned $STATUS — check the project isn't paused or the anon key hasn't changed."
+          fi
+        env:
+          SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkeW1wYnB5YXZpbHN0anNtanRtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3ODc1NjUsImV4cCI6MjEwMTM2MzU2NX0.zb-moqwGSoOB-rq9OSqk6cLt0JqXlzRBLebMLE2R4DA
