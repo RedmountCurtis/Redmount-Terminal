@@ -2,15 +2,19 @@ name: Supabase Keep-Alive
 
 on:
   schedule:
-    # Mondays and Thursdays at 14:00 UTC (~7am Pacific / 10am Eastern) — same cadence
-    # as the Cobalt keep-alive. Adjust the cron if you want a different schedule.
     - cron: '0 14 * * 1,4'
-  workflow_dispatch: {}   # lets you trigger it manually from the Actions tab to test
+  workflow_dispatch: {}
+
+# Needed so this workflow is allowed to push its own commit back to the repo.
+permissions:
+  contents: write
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Ping Redmount Supabase REST endpoint
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -18,8 +22,19 @@ jobs:
             -H "apikey: ${SUPABASE_ANON_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
           echo "Supabase responded with HTTP $STATUS"
+          mkdir -p .github
+          echo "$STATUS" > .github/last-keepalive-status.txt
           if [ "$STATUS" -ge 400 ]; then
             echo "::warning::Keep-alive ping returned $STATUS — check the project isn't paused or the anon key hasn't changed."
           fi
         env:
           SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkeW1wYnB5YXZpbHN0anNtanRtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3ODc1NjUsImV4cCI6MjEwMTM2MzU2NX0.zb-moqwGSoOB-rq9OSqk6cLt0JqXlzRBLebMLE2R4DA
+
+      - name: Record run timestamp (real git activity, keeps the schedule from being auto-disabled)
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-keepalive-run.txt
+          git config user.name "keepalive-bot"
+          git config user.email "actions@github.com"
+          git add .github/last-keepalive-run.txt .github/last-keepalive-status.txt
+          git diff --staged --quiet || git commit -m "Keep-alive ping: $(date -u +%Y-%m-%d)"
+          git push
