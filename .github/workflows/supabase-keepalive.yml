@@ -2,10 +2,11 @@ name: Supabase Keep-Alive
 
 on:
   schedule:
-    - cron: '0 14 * * 1,4'
+    # Daily, off the top of the hour (top-of-hour schedules get delayed hours by GitHub).
+    # Daily instead of Mon/Thu: one missed run can no longer open a 7-day gap.
+    - cron: '17 13 * * *'
   workflow_dispatch: {}
 
-# Needed so this workflow is allowed to push its own commit back to the repo.
 permissions:
   contents: write
 
@@ -13,28 +14,38 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Ping Redmount Supabase REST endpoint
+      - name: Ping Redmount Supabase REST endpoint (with retries)
+        id: ping
         run: |
+          # Retries cover transient DNS/network blips like the Oct 12 failure (curl exit 6).
+          # "|| true" so a network error records 000 instead of killing the job before the commit step.
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --retry 6 --retry-delay 30 --retry-all-errors --max-time 30 \
             "https://pdympbpyavilstjsmjtm.supabase.co/rest/v1/app_state?select=id&limit=1" \
             -H "apikey: ${SUPABASE_ANON_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" || true)
+          [ -z "$STATUS" ] && STATUS=000
           echo "Supabase responded with HTTP $STATUS"
           mkdir -p .github
           echo "$STATUS" > .github/last-keepalive-status.txt
-          if [ "$STATUS" -ge 400 ]; then
-            echo "::warning::Keep-alive ping returned $STATUS — check the project isn't paused or the anon key hasn't changed."
-          fi
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
         env:
           SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBkeW1wYnB5YXZpbHN0anNtanRtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU3ODc1NjUsImV4cCI6MjEwMTM2MzU2NX0.zb-moqwGSoOB-rq9OSqk6cLt0JqXlzRBLebMLE2R4DA
 
-      - name: Record run timestamp (real git activity, keeps the schedule from being auto-disabled)
+      - name: Record run timestamp (keeps the schedule from being auto-disabled)
         run: |
           date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-keepalive-run.txt
           git config user.name "keepalive-bot"
           git config user.email "actions@github.com"
           git add .github/last-keepalive-run.txt .github/last-keepalive-status.txt
           git diff --staged --quiet || git commit -m "Keep-alive ping: $(date -u +%Y-%m-%d)"
+          git pull --rebase --quiet || true
           git push
+
+      - name: Fail loudly if the ping didn't succeed (GitHub emails you on failure)
+        if: steps.ping.outputs.status != '200'
+        run: |
+          echo "::error::Keep-alive ping returned HTTP ${{ steps.ping.outputs.status }}. If the project is paused, restore it in the Supabase dashboard — a ping cannot unpause it."
+          exit 1
